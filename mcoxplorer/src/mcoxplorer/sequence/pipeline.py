@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from mcoxplorer.io.idmap import IdMapper
 from mcoxplorer.io.qc import sequence_qc
 from mcoxplorer.io.readers import read_csv, read_fasta
 from mcoxplorer.sequence.features import (
@@ -19,9 +20,21 @@ from mcoxplorer.sequence.features import (
 def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
     inputs = cfg["inputs"]
     seq_cfg = cfg["sequence"]
+    out_dir = Path(cfg["output_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    mapper = IdMapper(inputs.get("id_mapping_csv"))
+    mapper.export_resolved(out_dir / "id_mapping_resolved.csv")
+
     pos = read_fasta(inputs["positive_fasta"])
     cand = read_fasta(inputs["candidate_fasta"])
+    for r in pos:
+        r.protein_id = mapper.canonical(r.protein_id)
+    for r in cand:
+        r.protein_id = mapper.canonical(r.protein_id)
+
     pos_md = read_csv(inputs["positive_metadata_csv"])
+    pos_md = mapper.apply_to_dataframe(pos_md, "protein_id")
 
     pos_clean, pos_qc = sequence_qc(pos, seq_cfg["min_length"], seq_cfg["max_length"])
     cand_clean, cand_qc = sequence_qc(cand, seq_cfg["min_length"], seq_cfg["max_length"])
@@ -30,13 +43,17 @@ def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
         pos_md[["protein_id", "family", "label_type"]], on="protein_id", how="left"
     )
 
-    out_dir = Path(cfg["output_dir"])
-    out_dir.mkdir(parents=True, exist_ok=True)
     inter_dir = out_dir / "intermediate" / "sequence"
     inter_dir.mkdir(parents=True, exist_ok=True)
 
     tools = resolve_sequence_tools(cfg.get("external_tools", {}))
-    sim = similarity_search_mmseqs(cand_clean, pos_clean, tools["mmseqs"], inter_dir)
+    sim = similarity_search_mmseqs(
+        cand_clean,
+        pos_clean,
+        tools["mmseqs"],
+        inter_dir,
+        mapper=mapper,
+    )
     if sim.empty:
         sim = similarity_search_fallback(cand_clean, pos_clean)
 
@@ -45,8 +62,7 @@ def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
         cand_clean,
         pos_clean,
         pos_clusters,
-        tools["hmmbuild"],
-        tools["hmmsearch"],
+        tools,
         inter_dir / "hmmer",
     )
 

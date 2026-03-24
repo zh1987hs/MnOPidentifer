@@ -9,18 +9,17 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 
 
-def _extract_modeled_residues_and_confidence(path: Path) -> tuple[int, float | None]:
-    """Parse PDB/mmCIF to estimate modeled residues and mean confidence."""
-
+def _load_structure(path: Path):
     ext = path.suffix.lower()
-    structure = None
+    if ext in {".cif", ".mmcif"}:
+        return MMCIFParser(QUIET=True).get_structure(path.stem, str(path))
+    return PDBParser(QUIET=True).get_structure(path.stem, str(path))
+
+
+def _extract_modeled_residues_and_confidence(path: Path) -> tuple[int, float | None]:
     try:
-        if ext in {".cif", ".mmcif"}:
-            structure = MMCIFParser(QUIET=True).get_structure(path.stem, str(path))
-        else:
-            structure = PDBParser(QUIET=True).get_structure(path.stem, str(path))
+        structure = _load_structure(path)
     except Exception:
-        # fallback to line-based parser
         modeled = 0
         b_factors = []
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -48,16 +47,7 @@ def _extract_modeled_residues_and_confidence(path: Path) -> tuple[int, float | N
     return modeled_count, mean_conf
 
 
-def parse_structure_qc(
-    path: Path,
-    seq_length: int | None = None,
-    metadata_row: pd.Series | None = None,
-    min_modeled_residue_count: int = 1,
-    min_structure_confidence: float = 0.0,
-    min_structure_coverage: float = 0.0,
-) -> dict:
-    """Extract structure QC metrics with metadata fusion and thresholding."""
-
+def parse_structure_qc(path: Path, seq_length: int | None = None, metadata_row: pd.Series | None = None, min_modeled_residue_count: int = 1, min_structure_confidence: float = 0.0, min_structure_coverage: float = 0.0) -> dict:
     modeled_count, parsed_conf = _extract_modeled_residues_and_confidence(path)
     parsed_cov = (modeled_count / seq_length) if (seq_length and seq_length > 0) else None
 
@@ -69,12 +59,7 @@ def parse_structure_qc(
 
     coverage = float(meta_cov) if pd.notna(meta_cov) else (float(parsed_cov) if parsed_cov is not None else np.nan)
     confidence = float(meta_conf) if pd.notna(meta_conf) else (float(parsed_conf) if parsed_conf is not None else np.nan)
-
-    quality_pass = (
-        modeled_count >= min_modeled_residue_count
-        and (pd.isna(confidence) or confidence >= min_structure_confidence)
-        and (pd.isna(coverage) or coverage >= min_structure_coverage)
-    )
+    quality_pass = modeled_count >= min_modeled_residue_count and (pd.isna(confidence) or confidence >= min_structure_confidence) and (pd.isna(coverage) or coverage >= min_structure_coverage)
 
     return {
         "protein_id": path.stem,
@@ -87,16 +72,13 @@ def parse_structure_qc(
     }
 
 
-def compute_local_metal_features(sequence: str) -> dict[str, float]:
-    """Simple local motif features for Mn-binding propensity heuristics."""
-
+def compute_local_motif_sequence_support(sequence: str) -> dict[str, float]:
     seq = sequence.upper()
     motif_positions = []
     for i in range(len(seq) - 2):
         tri = seq[i : i + 3]
         if tri[0] in {"H", "D", "E"} and tri[2] in {"H", "D", "E"}:
             motif_positions.append(i + 1)
-
     windows = []
     for pos in motif_positions:
         l = max(0, pos - 5)
@@ -107,14 +89,86 @@ def compute_local_metal_features(sequence: str) -> dict[str, float]:
     acidic = (joined.count("D") + joined.count("E")) / max(len(joined), 1)
     basic = (joined.count("K") + joined.count("R") + joined.count("H")) / max(len(joined), 1)
     polar = sum(joined.count(x) for x in "STNQ") / max(len(joined), 1)
-    local_support = min(1.0, 0.6 * acidic + 0.2 * basic + 0.2 * polar + 0.1 * len(motif_positions))
-
+    sequence_local_support = min(1.0, 0.6 * acidic + 0.2 * basic + 0.2 * polar + 0.1 * len(motif_positions))
     return {
         "motif_count": float(len(motif_positions)),
         "local_acidic_density": acidic,
         "local_basic_density": basic,
         "local_polar_density": polar,
-        "local_structural_support": local_support,
+        "sequence_local_support": sequence_local_support,
+        "motif_positions": motif_positions,
+    }
+
+
+def compute_local_support_3d(structure_path: Path, sequence: str, motif_positions: list[int], radius: float = 8.0) -> dict[str, float]:
+    """Compute first-pass 3D local neighborhood stats around motif CA atoms."""
+
+    if not motif_positions or not structure_path.exists():
+        return {
+            "structure_local_support_3d": np.nan,
+            "local_neighbor_count_3d": np.nan,
+            "local_acidic_ratio_3d": np.nan,
+            "local_support_source": "sequence_heuristic",
+        }
+    try:
+        structure = _load_structure(structure_path)
+    except Exception:
+        return {
+            "structure_local_support_3d": np.nan,
+            "local_neighbor_count_3d": np.nan,
+            "local_acidic_ratio_3d": np.nan,
+            "local_support_source": "sequence_heuristic",
+        }
+
+    residue_coords = []
+    residue_names = []
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                if residue.id[0] != " ":
+                    continue
+                if "CA" in residue:
+                    residue_coords.append(residue["CA"].get_coord())
+                    residue_names.append(residue.get_resname())
+    if not residue_coords:
+        return {
+            "structure_local_support_3d": np.nan,
+            "local_neighbor_count_3d": np.nan,
+            "local_acidic_ratio_3d": np.nan,
+            "local_support_source": "sequence_heuristic",
+        }
+
+    coords = np.array(residue_coords)
+    acidic_names = {"ASP", "GLU"}
+    motif_indices = [i - 1 for i in motif_positions if 0 < i <= len(coords)]
+    if not motif_indices:
+        return {
+            "structure_local_support_3d": np.nan,
+            "local_neighbor_count_3d": np.nan,
+            "local_acidic_ratio_3d": np.nan,
+            "local_support_source": "sequence_heuristic",
+        }
+
+    neighbor_counts = []
+    acidic_ratios = []
+    for midx in motif_indices:
+        d = np.linalg.norm(coords - coords[midx], axis=1)
+        neighbors = np.where(d <= radius)[0]
+        neighbor_counts.append(len(neighbors))
+        if len(neighbors) == 0:
+            acidic_ratios.append(0.0)
+        else:
+            acidic = sum(1 for n in neighbors if residue_names[n] in acidic_names)
+            acidic_ratios.append(acidic / len(neighbors))
+
+    neighbor_mean = float(np.mean(neighbor_counts))
+    acidic_mean = float(np.mean(acidic_ratios))
+    support3d = min(1.0, 0.5 * acidic_mean + 0.5 * min(1.0, neighbor_mean / 20.0))
+    return {
+        "structure_local_support_3d": support3d,
+        "local_neighbor_count_3d": neighbor_mean,
+        "local_acidic_ratio_3d": acidic_mean,
+        "local_support_source": "structure_3d",
     }
 
 

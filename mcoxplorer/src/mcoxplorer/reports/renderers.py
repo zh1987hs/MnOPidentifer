@@ -7,6 +7,7 @@ import pandas as pd
 from mcoxplorer.reports.templates import (
     agreement_interpretation,
     first_batch_reason,
+    local_support_interpretation,
     risk_notes,
     sequence_evidence_summary,
     structure_global_summary,
@@ -33,6 +34,8 @@ def render_top_candidates_markdown(ranked: pd.DataFrame, top_n: int) -> str:
                 f"- sequence evidence summary: {sequence_evidence_summary(row)}",
                 f"- structure global evidence summary: {structure_global_summary(row)}",
                 f"- structure local evidence summary: {structure_local_summary(row)}",
+                f"- local support source: {local_support_interpretation(row)}",
+                f"- structure evidence usable: {row.get('structure_evidence_usable', 'NA')} (penalty={row.get('structure_quality_penalty', 'NA')})",
                 f"- sequence-structure agreement: {agreement_interpretation(row)}",
                 f"- first-batch recommendation: {first_batch_reason(row)}",
                 f"- risk notes: {risk_notes(row)}",
@@ -45,12 +48,7 @@ def render_top_candidates_markdown(ranked: pd.DataFrame, top_n: int) -> str:
 
 def render_positive_cluster_report(clusters: pd.DataFrame, prototypes: pd.DataFrame) -> str:
     n_clusters = clusters["structure_cluster_id"].nunique() if not clusters.empty else 0
-    lines = [
-        "# Positive Structure Cluster Report",
-        "",
-        f"- Total clusters: {n_clusters}",
-        "",
-    ]
+    lines = ["# Positive Structure Cluster Report", "", f"- Total clusters: {n_clusters}", ""]
     if clusters.empty:
         lines.append("No positive structure clusters were generated.")
         return "\n".join(lines)

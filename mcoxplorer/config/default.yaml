@@ -23,6 +23,8 @@ external_tools:
   tmalign: TMalign
   hmmbuild: hmmbuild
   hmmsearch: hmmsearch
+  mafft: mafft
+  muscle: muscle
 
 runtime:
   reuse_existing: true
@@ -40,6 +42,7 @@ sequence:
     cache_dir: ~/.cache/mcoxplorer
     device: cpu
     force_mock: false
+    batch_size: 8
   hmm:
     enabled: true
     min_cluster_size: 2

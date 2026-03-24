@@ -21,6 +21,8 @@ def run_fusion_ranking(cfg: dict, sequence_df: pd.DataFrame, structure_df: pd.Da
     merged["nearest_positive_structure_cluster"] = merged.get("nearest_positive_structure_cluster", "NA").fillna("NA")
 
     merged["sequence_structure_agreement_score"] = merged.get("sequence_structure_agreement_score", 0.5).fillna(0.5)
+    merged["structure_quality_penalty"] = merged.get("structure_quality_penalty", 0.0).fillna(0.0)
+    merged["structure_evidence_usable"] = merged.get("structure_evidence_usable", True).fillna(True)
     merged["false_positive_risk"] = derive_false_positive_risk(merged)
     merged["remote_but_structure_supported"] = (
         merged.get("best_identity_to_positive", pd.Series([1.0] * len(merged))).fillna(1.0) < 0.35
@@ -51,6 +53,8 @@ def run_fusion_ranking(cfg: dict, sequence_df: pd.DataFrame, structure_df: pd.Da
         "sequence_structure_agreement_score",
         "structure_novelty_score",
         "false_positive_risk",
+        "structure_quality_penalty",
+        "structure_evidence_usable",
         "remote_but_structure_supported",
         "high_confidence_first_batch",
         "structure_reason_summary",

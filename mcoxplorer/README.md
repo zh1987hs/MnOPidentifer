@@ -2,72 +2,58 @@
 
 MCOxplorer is an offline, reproducible **sequence + structure multimodal candidate prioritization** toolkit for remote Mn(II)-oxidizing multicopper oxidase (MCO) discovery.
 
-> **Important:** This project is a candidate-ranking and experiment-guidance tool, **not** a final function annotator.
+> Candidate prioritization tool only; not final functional annotation.
 
-## Current implementation status
-### Real-first paths (default)
-- Sequence similarity: **MMseqs2** search backend (fallback to in-memory pairwise identity).
-- Profile models: **HMMER (hmmbuild+hmmsearch)** cluster profiles (fallback to constant neutral score).
-- Embeddings: **ESM2 local cache** (fallback to deterministic mock embedding).
-- Structure search: **Foldseek** (required for full structure mode).
-- Structural refinement: **TM-align** optional top-hit refinement.
+## Real implementation vs fallback
+### Real implementation (default priority)
+- MMseqs2 sequence search.
+- HMMER profile scoring with **MSA-first** pipeline: MAFFT (preferred) or MUSCLE -> hmmbuild -> hmmsearch.
+- ESM2 local embedding runtime with one-time model/tokenizer init and batch inference.
+- Foldseek structure search + optional TM-align refinement.
+- Structure QC with PDB/mmCIF parsing + metadata fusion + quality thresholds.
+- Local support includes sequence motif heuristics + optional 3D neighborhood stats.
 
-### Fallback/optional paths
-- Missing MMseqs2/HMMER/ESM2/TM-align uses deterministic fallback with clear backend labels.
-- Missing Foldseek triggers graceful structure downgrade unless `runtime.structure_required=true`.
+### Fallback behavior
+- Missing MMseqs2/HMMER/MSA/ESM2/TM-align gracefully degrades with explicit backend labels.
+- Missing Foldseek downgrades structure workflow unless `runtime.structure_required=true`.
 
-## Install
-```bash
-conda env create -f environment.yml
-conda activate mcoxplorer
-pip install -e .[dev]
-```
+## Dependencies
+Python package deps are in `pyproject.toml`.
+External tools:
+- MMseqs2
+- HMMER (`hmmbuild`, `hmmsearch`)
+- MAFFT (recommended) or MUSCLE
+- Foldseek
+- TM-align
 
-## External tool installation (example)
-- MMseqs2: https://github.com/soedinglab/MMseqs2
-- HMMER: http://hmmer.org/
-- Foldseek: https://github.com/steineggerlab/foldseek
-- TM-align: https://zhanggroup.org/TM-align/
+Configure executable paths in `config/default.yaml` under `external_tools`.
 
-Set executable names/paths in `config/default.yaml -> external_tools`.
-
-## Run modes
-### Full real mode (recommended)
+## Run
 ```bash
 mcoxplorer run -c config/default.yaml
 ```
 
-### Lightweight fallback mode
-Disable/omit external tools and keep `runtime.structure_required=false`.
-
-### Structure-only
-```bash
-mcoxplorer structure-only -c config/default.yaml
-```
-
 ## Key outputs
+- `candidate_sequence_features.csv`
+- `candidate_structure_features.csv`
 - `ranked_candidates_sequence_view.csv`
 - `ranked_candidates_structure_view.csv`
 - `ranked_candidates_multimodal_view.csv`
-- `candidate_sequence_features.csv`
-- `candidate_structure_features.csv`
-- `positive_structure_similarity_matrix.csv`
-- `positive_structure_clusters.csv`
-- `positive_structure_prototypes.csv`
-- `positive_structure_cluster_family_summary.csv`
+- `id_mapping_resolved.csv`
 - `structure_qc_summary.csv`
-- `run_summary.json`
 - `reports/top_candidates_report.md`
 - `reports/positive_structure_cluster_report.md`
 
-## Interpretation highlights
-- `remote_but_structure_supported=true`: sequence-remote but structure-supported high-value candidates.
-- `high_confidence_first_batch=true`: recommended first-batch wet-lab candidates.
-- `false_positive_risk` helps identify generic-MCO-like risk.
-- Local motif/acidity support is provided in `candidate_structure_features.csv`.
+## Local feature interpretation
+- `sequence_local_support`: sequence-neighborhood heuristic support.
+- `structure_local_support_3d`: coordinate-based local neighborhood support (if motif mapping succeeds).
+- `combined_local_support`: fused local support used in scoring.
+
+## Practical notes
+- `structure_quality_penalty` and `structure_evidence_usable` directly affect structure score and report interpretation.
+- `remote_but_structure_supported` and `high_confidence_first_batch` help experiment prioritization.
 
 ## Limitations
-- Structural similarity does **not** prove Mn(II)-oxidizing activity.
-- Local motif features are first-version heuristics (not pocket energetics).
-- Predicted models can be wrong in key regions.
-- Wet-lab validation remains required.
+- Local 3D features are first-pass spatial statistics (not full pocket energetics/MD).
+- Structure similarity does not guarantee Mn(II)-oxidizing activity.
+- Wet-lab validation is required.

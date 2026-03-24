@@ -3,34 +3,32 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from mcoxplorer.io.idmap import IdMapper
 from mcoxplorer.io.readers import read_csv, read_fasta, read_structure_dir
 from mcoxplorer.structure.features import (
     choose_cluster_medoids,
-    compute_local_metal_features,
+    compute_local_motif_sequence_support,
+    compute_local_support_3d,
     hierarchical_structure_clustering,
     parse_structure_qc,
     symmetrize_similarity_matrix,
 )
-from mcoxplorer.structure.foldseek_runner import (
-    build_structure_db,
-    get_foldseek_runtime,
-    search_candidates_against_positive_db,
-    search_self_against_db,
-)
+from mcoxplorer.structure.foldseek_runner import build_structure_db, get_foldseek_runtime, search_candidates_against_positive_db, search_self_against_db
 from mcoxplorer.structure.tmalign_runner import refine_top_hits_with_tmalign
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_SIMILARITY = 0.0
 
 
-def _normalize_foldseek_hit_table(hits: pd.DataFrame) -> pd.DataFrame:
+def _normalize_foldseek_hit_table(hits: pd.DataFrame, mapper: IdMapper) -> pd.DataFrame:
     if hits.empty:
         return hits
     table = hits.copy()
-    table["target_id"] = table["target_id"].astype(str).map(lambda x: Path(x).stem)
-    table["query_id"] = table["query_id"].astype(str).map(lambda x: Path(x).stem)
+    table["target_id"] = table["target_id"].astype(str).map(lambda x: mapper.canonical(Path(x).stem))
+    table["query_id"] = table["query_id"].astype(str).map(lambda x: mapper.canonical(Path(x).stem))
     return table
 
 
@@ -52,24 +50,22 @@ def _rank_structure_features(candidate_df: pd.DataFrame) -> pd.DataFrame:
     if candidate_df.empty:
         return candidate_df
     out = candidate_df.copy()
-    out["structure_score"] = (
+    out["structure_score_raw"] = (
         0.22 * out["best_structure_similarity_to_any_positive"].fillna(0)
         + 0.15 * out["best_structure_similarity_to_gold_positive"].fillna(0)
         + 0.12 * out["similarity_to_nearest_cluster_prototype"].fillna(0)
         + 0.10 * out["mean_topk_structure_similarity"].fillna(0)
         + 0.08 * out["structure_family_consistency"].fillna(0)
-        + 0.08 * out["local_structural_support"].fillna(0)
+        + 0.08 * out["combined_local_support"].fillna(0)
         + 0.08 * out["structure_gold_bias"].fillna(0)
         + 0.07 * out["sequence_structure_agreement_score"].fillna(0)
         + 0.10 * (1 - out["possible_generic_mco_risk_structure"].fillna(1.0))
     ).clip(lower=0, upper=1)
-    out["remote_but_structure_supported"] = (
-        (out["best_identity_to_positive"].fillna(1.0) < 0.35)
-        & (out["best_structure_similarity_to_any_positive"].fillna(0.0) >= 0.65)
-    )
-    out["high_confidence_first_batch"] = (
-        out["structure_score"].fillna(0) >= 0.65
-    ) & (out["possible_generic_mco_risk_structure"].fillna(1) < 0.5)
+    out["structure_quality_penalty"] = out.get("structure_quality_penalty", 0.0).fillna(0.0)
+    out["structure_score"] = (out["structure_score_raw"] * (1 - out["structure_quality_penalty"])).clip(lower=0, upper=1)
+    out["structure_evidence_usable"] = out["structure_quality_penalty"] < 0.5
+    out["remote_but_structure_supported"] = (out["best_identity_to_positive"].fillna(1.0) < 0.35) & (out["best_structure_similarity_to_any_positive"].fillna(0.0) >= 0.65)
+    out["high_confidence_first_batch"] = (out["structure_score"].fillna(0) >= 0.65) & (out["possible_generic_mco_risk_structure"].fillna(1) < 0.5)
     out = out.sort_values("structure_score", ascending=False).reset_index(drop=True)
     out["structure_only_rank"] = out.index + 1
     return out
@@ -82,17 +78,28 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     inter_dir.mkdir(parents=True, exist_ok=True)
 
     inputs = cfg["inputs"]
+    mapper = IdMapper(inputs.get("id_mapping_csv"))
+    mapper.export_resolved(out_dir / "id_mapping_resolved.csv")
+
     runtime_cfg = cfg.get("runtime", {})
     structure_cfg = cfg["structure"]
     reuse_existing = runtime_cfg.get("reuse_existing", True)
     force_rerun = runtime_cfg.get("force_rerun", False)
 
-    pos_struct = read_structure_dir(inputs["positive_structure_dir"])
-    cand_struct = read_structure_dir(inputs["candidate_structure_dir"])
+    pos_struct_raw = read_structure_dir(inputs["positive_structure_dir"])
+    cand_struct_raw = read_structure_dir(inputs["candidate_structure_dir"])
+    pos_struct = {mapper.canonical(k): v for k, v in pos_struct_raw.items()}
+    cand_struct = {mapper.canonical(k): v for k, v in cand_struct_raw.items()}
+
     positives = read_fasta(inputs["positive_fasta"])
     candidates = read_fasta(inputs["candidate_fasta"])
-    pos_md = read_csv(inputs["positive_metadata_csv"])
-    struct_md = read_csv(inputs["structure_metadata_csv"]) if Path(inputs.get("structure_metadata_csv", "")).exists() else pd.DataFrame()
+    for r in positives:
+        r.protein_id = mapper.canonical(r.protein_id)
+    for r in candidates:
+        r.protein_id = mapper.canonical(r.protein_id)
+
+    pos_md = mapper.apply_to_dataframe(read_csv(inputs["positive_metadata_csv"]), "protein_id")
+    struct_md = mapper.apply_to_dataframe(read_csv(inputs["structure_metadata_csv"]), "protein_id") if Path(inputs.get("structure_metadata_csv", "")).exists() else pd.DataFrame()
 
     all_candidate_ids = [c.protein_id for c in candidates]
     seq_len_map = {r.protein_id: len(r.sequence) for r in positives + candidates}
@@ -100,18 +107,18 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     quality_cfg = structure_cfg.get("quality", {})
 
     qc_rows = []
-    for p in list(pos_struct.values()) + list(cand_struct.values()):
-        row = md_map.loc[p.stem] if (not md_map.empty and p.stem in md_map.index) else None
-        qc_rows.append(
-            parse_structure_qc(
-                p,
-                seq_length=seq_len_map.get(p.stem),
-                metadata_row=row,
-                min_modeled_residue_count=int(quality_cfg.get("min_modeled_residue_count", 1)),
-                min_structure_confidence=float(quality_cfg.get("min_structure_confidence", 0.0)),
-                min_structure_coverage=float(quality_cfg.get("min_structure_coverage", 0.0)),
-            )
+    for sid, spath in {**pos_struct, **cand_struct}.items():
+        row = md_map.loc[sid] if (not md_map.empty and sid in md_map.index) else None
+        qc = parse_structure_qc(
+            spath,
+            seq_length=seq_len_map.get(sid),
+            metadata_row=row,
+            min_modeled_residue_count=int(quality_cfg.get("min_modeled_residue_count", 1)),
+            min_structure_confidence=float(quality_cfg.get("min_structure_confidence", 0.0)),
+            min_structure_coverage=float(quality_cfg.get("min_structure_coverage", 0.0)),
         )
+        qc["protein_id"] = sid
+        qc_rows.append(qc)
     qc_df = pd.DataFrame(qc_rows)
     qc_df.to_csv(out_dir / "structure_qc_summary.csv", index=False)
 
@@ -132,14 +139,8 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     build_structure_db(inputs["positive_structure_dir"], positive_db, foldseek_rt.executable, force=force_rerun)
 
     pair_hits = _normalize_foldseek_hit_table(
-        search_self_against_db(
-            inputs["positive_structure_dir"],
-            positive_db,
-            inter_dir / "positive_vs_positive_foldseek.tsv",
-            inter_dir / "tmp_pos",
-            foldseek_rt.executable,
-            force=force_rerun or (not reuse_existing),
-        )
+        search_self_against_db(inputs["positive_structure_dir"], positive_db, inter_dir / "positive_vs_positive_foldseek.tsv", inter_dir / "tmp_pos", foldseek_rt.executable, force=force_rerun or (not reuse_existing)),
+        mapper,
     )
 
     pos_ids = [p.protein_id for p in positives if p.protein_id in pos_struct]
@@ -147,11 +148,7 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     similarity_matrix.to_csv(out_dir / "positive_structure_similarity_matrix.csv")
 
     cluster_cfg = structure_cfg.get("clustering", {})
-    cluster_df = hierarchical_structure_clustering(
-        similarity_matrix,
-        linkage_method=cluster_cfg.get("linkage_method", "average"),
-        cut_threshold=cluster_cfg.get("cut_distance_threshold", 0.45),
-    )
+    cluster_df = hierarchical_structure_clustering(similarity_matrix, linkage_method=cluster_cfg.get("linkage_method", "average"), cut_threshold=cluster_cfg.get("cut_distance_threshold", 0.45))
     proto_df = choose_cluster_medoids(similarity_matrix, cluster_df)
 
     cluster_df = cluster_df.merge(pos_md[["protein_id", "family", "label_type"]], on="protein_id", how="left")
@@ -160,41 +157,21 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     cluster_df["nearest_prototype_id"] = cluster_df["prototype_id"]
     cluster_df.to_csv(out_dir / "positive_structure_clusters.csv", index=False)
 
-    proto_with_meta = proto_df.merge(
-        cluster_df[["protein_id", "family", "label_type"]].drop_duplicates(),
-        left_on="prototype_id",
-        right_on="protein_id",
-        how="left",
-    ).drop(columns=["protein_id"])
+    proto_with_meta = proto_df.merge(cluster_df[["protein_id", "family", "label_type"]].drop_duplicates(), left_on="prototype_id", right_on="protein_id", how="left").drop(columns=["protein_id"])
     proto_with_meta["prototype_structure_path"] = proto_with_meta["prototype_id"].map({k: str(v) for k, v in pos_struct.items()})
     proto_with_meta.to_csv(out_dir / "positive_structure_prototypes.csv", index=False)
 
-    fam_summary = (
-        cluster_df.groupby(["family", "structure_cluster_id", "label_type"]).size().reset_index(name="count").sort_values(["structure_cluster_id", "count"], ascending=[True, False])
-    )
+    fam_summary = cluster_df.groupby(["family", "structure_cluster_id", "label_type"]).size().reset_index(name="count").sort_values(["structure_cluster_id", "count"], ascending=[True, False])
     fam_summary.to_csv(out_dir / "positive_structure_cluster_family_summary.csv", index=False)
 
     cand_hits = _normalize_foldseek_hit_table(
-        search_candidates_against_positive_db(
-            inputs["candidate_structure_dir"],
-            positive_db,
-            inter_dir / "candidates_vs_positive_foldseek.tsv",
-            inter_dir / "tmp_cand",
-            foldseek_rt.executable,
-            params=structure_cfg.get("foldseek", {}),
-            force=force_rerun or (not reuse_existing),
-        )
+        search_candidates_against_positive_db(inputs["candidate_structure_dir"], positive_db, inter_dir / "candidates_vs_positive_foldseek.tsv", inter_dir / "tmp_cand", foldseek_rt.executable, params=structure_cfg.get("foldseek", {}), force=force_rerun or (not reuse_existing)),
+        mapper,
     )
 
     structure_lookup = {**pos_struct, **cand_struct}
     tma_cfg = structure_cfg.get("tmalign", {})
-    tma_df = refine_top_hits_with_tmalign(
-        cand_hits,
-        top_k_per_query=int(tma_cfg.get("top_k_per_query", 3)),
-        structure_lookup=structure_lookup,
-        tmalign_config=cfg["external_tools"]["tmalign"],
-        raw_text_dir=inter_dir / "tmalign_raw",
-    ) if tma_cfg.get("enabled", True) else pd.DataFrame()
+    tma_df = refine_top_hits_with_tmalign(cand_hits, top_k_per_query=int(tma_cfg.get("top_k_per_query", 3)), structure_lookup=structure_lookup, tmalign_config=cfg["external_tools"]["tmalign"], raw_text_dir=inter_dir / "tmalign_raw") if tma_cfg.get("enabled", True) else pd.DataFrame()
 
     if not tma_df.empty:
         tma_score = tma_df.copy()
@@ -225,28 +202,34 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
     rows = []
     for cid in all_candidate_ids:
         sub = cand_hits[cand_hits["query_id"] == cid].sort_values("similarity_final", ascending=False)
-        local = compute_local_metal_features(seq_map.get(cid, ""))
+        seq_local = compute_local_motif_sequence_support(seq_map.get(cid, ""))
+        str_local = compute_local_support_3d(cand_struct.get(cid, Path("")), seq_map.get(cid, ""), seq_local.get("motif_positions", []), radius=float(structure_cfg.get("local_radius", 8.0)))
+        combined_local = np.nanmean([seq_local["sequence_local_support"], str_local.get("structure_local_support_3d")]) if pd.notna(str_local.get("structure_local_support_3d")) else seq_local["sequence_local_support"]
+
         if sub.empty:
-            row = {"candidate_id": cid, "protein_id": cid, **local}
-            row.update(
-                {
-                    "best_structure_similarity_to_any_positive": pd.NA,
-                    "best_structure_similarity_to_gold_positive": pd.NA,
-                    "mean_topk_structure_similarity": pd.NA,
-                    "nearest_positive_structure_cluster": pd.NA,
-                    "similarity_to_nearest_cluster_prototype": pd.NA,
-                    "structure_support_count_above_threshold": 0,
-                    "structure_novelty_score": pd.NA,
-                    "structure_family_consistency": pd.NA,
-                    "structure_gold_bias": pd.NA,
-                    "structure_silver_bias": pd.NA,
-                    "possible_generic_mco_risk_structure": pd.NA,
-                    "sequence_structure_agreement_score": pd.NA,
-                    "structure_reason_summary": "No structure evidence available; fallback to sequence-only.",
-                    "best_structure_similarity_to_positive": pd.NA,
-                    "best_identity_to_positive": seq_identity_map.get(cid, pd.NA),
-                }
-            )
+            row = {
+                "candidate_id": cid,
+                "protein_id": cid,
+                **{k: v for k, v in seq_local.items() if k != "motif_positions"},
+                **str_local,
+                "combined_local_support": combined_local,
+                "best_structure_similarity_to_any_positive": pd.NA,
+                "best_structure_similarity_to_gold_positive": pd.NA,
+                "mean_topk_structure_similarity": pd.NA,
+                "nearest_positive_structure_cluster": pd.NA,
+                "similarity_to_nearest_cluster_prototype": pd.NA,
+                "structure_support_count_above_threshold": 0,
+                "structure_novelty_score": pd.NA,
+                "structure_family_consistency": pd.NA,
+                "structure_gold_bias": pd.NA,
+                "structure_silver_bias": pd.NA,
+                "possible_generic_mco_risk_structure": pd.NA,
+                "sequence_structure_agreement_score": pd.NA,
+                "structure_reason_summary": "No structure evidence available; fallback to sequence-only.",
+                "best_structure_similarity_to_positive": pd.NA,
+                "best_identity_to_positive": seq_identity_map.get(cid, pd.NA),
+                "structure_quality_penalty": 1.0,
+            }
             rows.append(row)
             continue
 
@@ -271,16 +254,26 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
 
         gold_bias = float((sub["target_id"].map(pos_label_map) == "gold").mean())
         silver_bias = float((sub["target_id"].map(pos_label_map) == "silver").mean())
-        generic_risk = 1.0 if (best_any < 0.45 and mean_topk < 0.4 and local["local_structural_support"] < 0.45) else (0.6 if family_consistency == 0 and best_any < 0.55 else 0.2)
+        generic_risk = 1.0 if (best_any < 0.45 and mean_topk < 0.4 and combined_local < 0.45) else (0.6 if family_consistency == 0 and best_any < 0.55 else 0.2)
 
-        reason = "Strong global+local structural support." if (best_any >= 0.7 and local["local_structural_support"] >= 0.5) else (
-            "Moderate structure support; validate with sequence evidence." if best_any >= 0.6 else "Weak structure support; possible generic MCO background risk."
-        )
+        quality_penalty = 0.0
+        if cid in qc_by_id.index:
+            qrow = qc_by_id.loc[cid]
+            if not bool(qrow.get("structure_quality_pass", False)):
+                quality_penalty = 0.45
+            if pd.notna(qrow.get("structure_coverage")) and qrow.get("structure_coverage") < structure_cfg["quality"].get("min_structure_coverage", 0.5):
+                quality_penalty = max(quality_penalty, 0.3)
+            if pd.notna(qrow.get("mean_structure_confidence")) and qrow.get("mean_structure_confidence") < structure_cfg["quality"].get("min_structure_confidence", 50.0):
+                quality_penalty = max(quality_penalty, 0.3)
+
+        reason = "Strong global+local structural support." if (best_any >= 0.7 and combined_local >= 0.5) else ("Moderate structure support; validate with sequence evidence." if best_any >= 0.6 else "Weak structure support; possible generic MCO background risk.")
 
         row = {
             "candidate_id": cid,
             "protein_id": cid,
-            **local,
+            **{k: v for k, v in seq_local.items() if k != "motif_positions"},
+            **str_local,
+            "combined_local_support": combined_local,
             "best_structure_similarity_to_any_positive": best_any,
             "best_structure_similarity_to_gold_positive": best_gold,
             "mean_topk_structure_similarity": mean_topk,
@@ -296,6 +289,7 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
             "structure_reason_summary": reason,
             "best_structure_similarity_to_positive": best_any,
             "best_identity_to_positive": seq_identity_map.get(cid, pd.NA),
+            "structure_quality_penalty": quality_penalty,
         }
         if cid in qc_by_id.index:
             row.update(

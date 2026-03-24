@@ -47,3 +47,10 @@ def risk_notes(row: pd.Series) -> str:
     if pd.isna(row.get("best_structure_similarity_to_positive")):
         return "缺乏结构证据。"
     return "未见显著结构风险信号。"
+
+
+def local_support_interpretation(row: pd.Series) -> str:
+    src = row.get("local_support_source", "sequence_heuristic")
+    if src == "structure_3d":
+        return "局部支持来自3D空间邻域统计。"
+    return "局部支持主要来自序列邻域启发式。"
