@@ -58,7 +58,7 @@ def cluster_sequences_mmseqs(records: list[SequenceRecord], mmseqs_exe: str | No
 
     if mmseqs_exe is None:
         out = cluster_sequences(records, min_seq_id)
-        out["clustering_backend"] = "fallback_greedy"
+        out["sequence_cluster_backend"] = "fallback_greedy"
         return out
     tmp_root.mkdir(parents=True, exist_ok=True)
     in_fa = tmp_root / "positive.fa"
@@ -69,7 +69,7 @@ def cluster_sequences_mmseqs(records: list[SequenceRecord], mmseqs_exe: str | No
     tsv = Path(str(out_prefix) + "_cluster.tsv")
     if not tsv.exists():
         out = cluster_sequences(records, min_seq_id)
-        out["clustering_backend"] = "fallback_greedy"
+        out["sequence_cluster_backend"] = "fallback_greedy"
         return out
     raw = pd.read_csv(tsv, sep="	", header=None, names=["rep", "member"])
     rep_to_cluster = {rep: i + 1 for i, rep in enumerate(sorted(raw["rep"].unique()))}
@@ -80,7 +80,7 @@ def cluster_sequences_mmseqs(records: list[SequenceRecord], mmseqs_exe: str | No
             cid = len(rep_to_cluster) + 1
         else:
             cid = rep_to_cluster[hit.iloc[0]["rep"]]
-        rows.append({"protein_id": r.protein_id, "sequence_cluster": cid, "clustering_backend": "mmseqs2"})
+        rows.append({"protein_id": r.protein_id, "sequence_cluster": cid, "sequence_cluster_backend": "mmseqs2"})
     return pd.DataFrame(rows)
 def _write_fasta(records: list[SequenceRecord], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:

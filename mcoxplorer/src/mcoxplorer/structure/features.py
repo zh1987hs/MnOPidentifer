@@ -4,7 +4,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from Bio import pairwise2
 from Bio.PDB import MMCIFParser, PDBParser
+from Bio.SeqUtils import seq1
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 
@@ -132,17 +134,12 @@ def compute_local_support_3d(structure_path: Path, sequence: str, motif_position
 
     residue_coords = []
     residue_names = []
-    residue_seq_index_map = []
-    seq_cursor = 0
     for model in structure:
         for chain in model:
-            chain_res = [r for r in chain if r.id[0] == " " and "CA" in r]
-            # Use modeled residue order per chain as a coarse sequence index map.
-            for r in chain_res:
-                residue_coords.append(r["CA"].get_coord())
-                residue_names.append(r.get_resname())
-                residue_seq_index_map.append(seq_cursor + 1)  # 1-based
-                seq_cursor += 1
+            for r in chain:
+                if r.id[0] == " " and "CA" in r:
+                    residue_coords.append(r["CA"].get_coord())
+                    residue_names.append(r.get_resname())
     if not residue_coords:
         return {
             "structure_local_support_3d": np.nan,
@@ -156,12 +153,37 @@ def compute_local_support_3d(structure_path: Path, sequence: str, motif_position
     coords = np.array(residue_coords)
     acidic_names = {"ASP", "GLU"}
 
+    struct_seq = ''.join(seq1(res, custom_map={"MSE": "M"}) if len(res)==3 else 'X' for res in residue_names)
+    if not struct_seq:
+        return {
+            "structure_local_support_3d": np.nan,
+            "local_neighbor_count_3d": np.nan,
+            "local_acidic_ratio_3d": np.nan,
+            "motif_mapped_count_3d": 0,
+            "motif_mapping_confidence": 0.0,
+            "local_support_source": "sequence_heuristic",
+        }
+    aln = pairwise2.align.globalxx(sequence.upper(), struct_seq, one_alignment_only=True)
     mapped_indices = []
-    for mpos in motif_positions:
-        # nearest modeled residue by sequence-order distance
-        nearest = min(range(len(residue_seq_index_map)), key=lambda i: abs(residue_seq_index_map[i] - mpos))
-        if abs(residue_seq_index_map[nearest] - mpos) <= 3:
-            mapped_indices.append(nearest)
+    if aln:
+        seq_aln, struct_aln, *_ = aln[0]
+        seq_pos = 0
+        struct_pos = 0
+        seq_to_struct = {}
+        for a, b in zip(seq_aln, struct_aln):
+            if a != '-':
+                seq_pos += 1
+            if b != '-':
+                struct_pos += 1
+            if a != '-' and b != '-':
+                seq_to_struct[seq_pos] = struct_pos - 1
+        for mpos in motif_positions:
+            if mpos in seq_to_struct:
+                mapped_indices.append(seq_to_struct[mpos])
+            elif seq_to_struct:
+                nearest_seq = min(seq_to_struct.keys(), key=lambda x: abs(x - mpos))
+                if abs(nearest_seq - mpos) <= 3:
+                    mapped_indices.append(seq_to_struct[nearest_seq])
 
     mapped_count = len(mapped_indices)
     mapping_conf = mapped_count / max(len(motif_positions), 1)

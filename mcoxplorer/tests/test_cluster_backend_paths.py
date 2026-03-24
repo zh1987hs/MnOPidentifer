@@ -7,7 +7,7 @@ from mcoxplorer.sequence import features as sf
 def test_cluster_backend_fallback(tmp_path: Path):
     recs = [SequenceRecord("p1", "AAAA"), SequenceRecord("p2", "AAAT")]
     out = sf.cluster_sequences_mmseqs(recs, None, tmp_path, min_seq_id=0.4)
-    assert (out["clustering_backend"] == "fallback_greedy").all()
+    assert (out["sequence_cluster_backend"] == "fallback_greedy").all()
 
 
 def test_cluster_backend_mmseqs(monkeypatch, tmp_path: Path):
@@ -22,4 +22,4 @@ def test_cluster_backend_mmseqs(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(sf, "run_command", fake_run)
     out = sf.cluster_sequences_mmseqs(recs, "mmseqs", tmp_path, min_seq_id=0.4)
-    assert (out["clustering_backend"] == "mmseqs2").all()
+    assert (out["sequence_cluster_backend"] == "mmseqs2").all()

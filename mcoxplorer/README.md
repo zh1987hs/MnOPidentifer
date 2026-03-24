@@ -7,6 +7,7 @@ MCOxplorer is an offline, reproducible **sequence + structure multimodal candida
 ## Real implementation vs fallback
 ### Real implementation (default priority)
 - MMseqs2 sequence search.
+- Positive-sequence clustering: MMseqs2 easy-cluster (fallback: greedy identity clustering).
 - HMMER profile scoring with **MSA-first** pipeline: MAFFT (preferred) or MUSCLE -> hmmbuild -> hmmsearch.
 - ESM2 local embedding runtime with one-time model/tokenizer init and batch inference.
 - Foldseek structure search + optional TM-align refinement.
@@ -50,6 +51,7 @@ mcoxplorer run -c config/default.yaml
 - `combined_local_support`: fused local support used in scoring.
 
 ## Practical notes
+- `sequence_cluster_backend` indicates `mmseqs2` or `fallback_greedy`.
 - `structure_quality_penalty` and `structure_evidence_usable` directly affect structure score and report interpretation.
 - `remote_but_structure_supported` and `high_confidence_first_batch` help experiment prioritization.
 
