@@ -22,6 +22,10 @@ dependencies = [
 dev = [
   "pytest>=8.0",
 ]
+esm = [
+  "torch>=2.1",
+  "transformers>=4.38",
+]
 
 [project.scripts]
 mcoxplorer = "mcoxplorer.cli:main"

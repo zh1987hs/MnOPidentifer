@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from mcoxplorer.reports.templates import batch_recommendation, recommendation_sentence
+from mcoxplorer.reports.templates import (
+    agreement_interpretation,
+    first_batch_reason,
+    risk_notes,
+    sequence_evidence_summary,
+    structure_global_summary,
+    structure_local_summary,
+)
 
 
 def render_top_candidates_markdown(ranked: pd.DataFrame, top_n: int) -> str:
@@ -15,7 +22,6 @@ def render_top_candidates_markdown(ranked: pd.DataFrame, top_n: int) -> str:
         "",
     ]
     for _, row in ranked.head(top_n).iterrows():
-        remote_struct = row.get("best_identity_to_positive", 1.0) < 0.35 and row.get("best_structure_similarity_to_positive", 0.0) > 0.65
         lines.extend(
             [
                 f"## Candidate {row.get('candidate_id', row.get('protein_id'))}",
@@ -24,14 +30,13 @@ def render_top_candidates_markdown(ranked: pd.DataFrame, top_n: int) -> str:
                 f"- structure_only_rank: {row.get('structure_only_rank', 'NA')}",
                 f"- nearest_positive_family: {row.get('nearest_positive_family', 'NA')}",
                 f"- nearest_positive_structure_cluster: {row.get('nearest_positive_structure_cluster', 'NA')}",
-                f"- best_identity_to_positive: {row.get('best_identity_to_positive', 'NA')}",
-                f"- best_structure_similarity_to_positive: {row.get('best_structure_similarity_to_positive', 'NA')}",
-                f"- gold-supported: {'YES' if row.get('best_structure_similarity_to_gold_positive', 0) >= 0.55 else 'NO'}",
-                f"- remote-but-structurally-supported: {'YES' if remote_struct else 'NO'}",
-                f"- sequence_structure_agreement_score: {row.get('sequence_structure_agreement_score', 'NA')}",
-                f"- generic_mco_risk: {row.get('false_positive_risk', 'NA')}",
-                f"- interpretation: {recommendation_sentence(row)}",
-                f"- experimental_batch: {batch_recommendation(row)}",
+                f"- sequence evidence summary: {sequence_evidence_summary(row)}",
+                f"- structure global evidence summary: {structure_global_summary(row)}",
+                f"- structure local evidence summary: {structure_local_summary(row)}",
+                f"- sequence-structure agreement: {agreement_interpretation(row)}",
+                f"- first-batch recommendation: {first_batch_reason(row)}",
+                f"- risk notes: {risk_notes(row)}",
+                f"- final interpretation: {row.get('final_reason_summary', 'NA')}",
                 "",
             ]
         )
@@ -52,16 +57,22 @@ def render_positive_cluster_report(clusters: pd.DataFrame, prototypes: pd.DataFr
 
     for cid, sub in clusters.groupby("structure_cluster_id"):
         fams = ", ".join(sorted(sub["family"].dropna().astype(str).unique().tolist()))
-        label_mix = ", ".join(sorted(sub["label_type"].dropna().astype(str).unique().tolist()))
+        labels = sub["label_type"].dropna().astype(str)
+        gold = int((labels == "gold").sum())
+        silver = int((labels == "silver").sum())
         proto = prototypes[prototypes["structure_cluster_id"] == cid]["prototype_id"].iloc[0]
+        compactness = sub["cluster_compactness"].iloc[0] if "cluster_compactness" in sub.columns else "NA"
+        seq_struct_disagree = sub["family"].nunique() > 1
         lines.extend(
             [
                 f"## Cluster {cid}",
                 f"- size: {len(sub)}",
                 f"- prototype: {proto}",
                 f"- families: {fams if fams else 'NA'}",
-                f"- label types: {label_mix if label_mix else 'NA'}",
-                f"- mixed gold/silver: {'YES' if {'gold', 'silver'}.issubset(set(sub['label_type'].dropna())) else 'NO'}",
+                f"- compactness: {compactness}",
+                f"- dispersion: {round(1 - compactness, 3) if compactness != 'NA' else 'NA'}",
+                f"- gold/silver: {gold}/{silver}",
+                f"- sequence-family vs structure-cluster disagreement: {'YES' if seq_struct_disagree else 'NO'}",
                 "",
             ]
         )

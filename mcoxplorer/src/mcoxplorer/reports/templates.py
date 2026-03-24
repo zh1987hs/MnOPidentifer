@@ -3,21 +3,47 @@ from __future__ import annotations
 import pandas as pd
 
 
-def recommendation_sentence(row: pd.Series) -> str:
-    if pd.isna(row.get("best_structure_similarity_to_positive")):
-        return "该候选当前缺乏结构证据，排名主要基于序列模块结果。"
-    if row.get("best_identity_to_positive", 1.0) < 0.35 and row.get("structure_score", 0.0) > 0.65:
-        return "该候选在一级序列空间中与正样本距离较远，但在三维结构层面与正样本prototype/cluster显示出较高相似性，属于值得优先关注的远缘候选。"
-    if row.get("sequence_score", 0.0) > 0.6 and row.get("structure_score", 0.0) > 0.6:
-        return "该候选同时获得序列证据和结构证据支持，优先级较高。"
+def sequence_evidence_summary(row: pd.Series) -> str:
+    score = row.get("sequence_score", 0.0)
+    ident = row.get("best_identity_to_positive", 0.0)
+    return f"sequence_score={score:.3f}; best_identity={ident:.3f}"
+
+
+def structure_global_summary(row: pd.Series) -> str:
+    return (
+        f"best_structure_similarity={row.get('best_structure_similarity_to_positive', 'NA')}; "
+        f"prototype_similarity={row.get('similarity_to_nearest_cluster_prototype', 'NA')}; "
+        f"topk_mean={row.get('mean_topk_structure_similarity', 'NA')}"
+    )
+
+
+def structure_local_summary(row: pd.Series) -> str:
+    return (
+        f"motif_count={row.get('motif_count', 'NA')}; acidic_density={row.get('local_acidic_density', 'NA')}; "
+        f"local_support={row.get('local_structural_support', 'NA')}"
+    )
+
+
+def agreement_interpretation(row: pd.Series) -> str:
+    if bool(row.get("remote_but_structure_supported", False)):
+        return "序列远缘但结构支持强。"
+    ssa = row.get("sequence_structure_agreement_score", 0.5)
+    if ssa >= 0.7:
+        return "序列与结构证据一致。"
+    if ssa <= 0.3:
+        return "序列与结构证据存在冲突。"
+    return "序列与结构证据部分一致。"
+
+
+def first_batch_reason(row: pd.Series) -> str:
+    if bool(row.get("high_confidence_first_batch", False)):
+        return "结构与序列综合得分高且风险可控，建议第一批验证。"
+    return "建议后续批次或补充证据后验证。"
+
+
+def risk_notes(row: pd.Series) -> str:
     if row.get("false_positive_risk", 0.0) > 0.65:
-        return "该候选虽具有一定结构相似性，但综合证据提示其更可能属于通用MCO背景，建议谨慎纳入首轮实验。"
-    return "该候选具有中等证据强度，建议结合实验可行性安排后续验证。"
-
-
-def batch_recommendation(row: pd.Series) -> str:
-    if row.get("fused_rank", 999) <= 10 and row.get("false_positive_risk", 1.0) < 0.5:
-        return "建议列入第一批实验名单"
-    if row.get("false_positive_risk", 1.0) > 0.75:
-        return "建议暂缓，需更多证据"
-    return "建议列入第二批实验名单"
+        return "generic MCO 假阳性风险偏高。"
+    if pd.isna(row.get("best_structure_similarity_to_positive")):
+        return "缺乏结构证据。"
+    return "未见显著结构风险信号。"

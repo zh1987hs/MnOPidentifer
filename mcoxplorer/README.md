@@ -4,16 +4,17 @@ MCOxplorer is an offline, reproducible **sequence + structure multimodal candida
 
 > **Important:** This project is a candidate-ranking and experiment-guidance tool, **not** a final function annotator.
 
-## Scientific positioning
-- Focus: identify which unannotated proteins are most worth wet-lab validation.
-- Key value: rescue **sequence-remote but structure-supported** candidates.
-- Output style: transparent scores + rule-based Markdown reports for experimental teams.
+## Current implementation status
+### Real-first paths (default)
+- Sequence similarity: **MMseqs2** search backend (fallback to in-memory pairwise identity).
+- Profile models: **HMMER (hmmbuild+hmmsearch)** cluster profiles (fallback to constant neutral score).
+- Embeddings: **ESM2 local cache** (fallback to deterministic mock embedding).
+- Structure search: **Foldseek** (required for full structure mode).
+- Structural refinement: **TM-align** optional top-hit refinement.
 
-## Core modules
-- `sequence`: FASTA QC, positive clustering, sequence similarity, embedding novelty.
-- `structure`: Foldseek/TM-align interfaces, positive structure clustering, prototype selection, candidate structural features.
-- `fusion`: configurable multimodal scoring/ranking.
-- `reports`: deterministic template-based report generation (no online LLM API).
+### Fallback/optional paths
+- Missing MMseqs2/HMMER/ESM2/TM-align uses deterministic fallback with clear backend labels.
+- Missing Foldseek triggers graceful structure downgrade unless `runtime.structure_required=true`.
 
 ## Install
 ```bash
@@ -22,33 +23,27 @@ conda activate mcoxplorer
 pip install -e .[dev]
 ```
 
-## External dependencies
-Optional but recommended:
-- **Foldseek** (required for full structure workflow)
-- **TM-align** (optional refinement for top hits)
-- MMseqs2 (future sequence acceleration path)
+## External tool installation (example)
+- MMseqs2: https://github.com/soedinglab/MMseqs2
+- HMMER: http://hmmer.org/
+- Foldseek: https://github.com/steineggerlab/foldseek
+- TM-align: https://zhanggroup.org/TM-align/
 
-You can provide executable names in `config/default.yaml` under `external_tools`.
+Set executable names/paths in `config/default.yaml -> external_tools`.
 
-## Quick start
+## Run modes
+### Full real mode (recommended)
 ```bash
-mcoxplorer init-example --dest .
-mcoxplorer validate-config -c config/default.yaml
 mcoxplorer run -c config/default.yaml
 ```
 
-## Structure-only run
+### Lightweight fallback mode
+Disable/omit external tools and keep `runtime.structure_required=false`.
+
+### Structure-only
 ```bash
 mcoxplorer structure-only -c config/default.yaml
 ```
-
-## CLI
-- `init-example`
-- `run`
-- `sequence-only`
-- `structure-only`
-- `report`
-- `validate-config`
 
 ## Key outputs
 - `ranked_candidates_sequence_view.csv`
@@ -65,14 +60,14 @@ mcoxplorer structure-only -c config/default.yaml
 - `reports/top_candidates_report.md`
 - `reports/positive_structure_cluster_report.md`
 
-## Result interpretation hints
-- High sequence + high structure: strong first-batch candidates.
-- Low sequence + high structure: high-value remote candidates.
-- High generic MCO risk: likely false-positive context; validate carefully.
-- Missing structure: candidate kept, but fusion degrades toward sequence evidence.
+## Interpretation highlights
+- `remote_but_structure_supported=true`: sequence-remote but structure-supported high-value candidates.
+- `high_confidence_first_batch=true`: recommended first-batch wet-lab candidates.
+- `false_positive_risk` helps identify generic-MCO-like risk.
+- Local motif/acidity support is provided in `candidate_structure_features.csv`.
 
 ## Limitations
 - Structural similarity does **not** prove Mn(II)-oxidizing activity.
-- Predicted models can be wrong in local regions.
-- Current local-site chemistry features are heuristic-level only.
+- Local motif features are first-version heuristics (not pocket energetics).
+- Predicted models can be wrong in key regions.
 - Wet-lab validation remains required.

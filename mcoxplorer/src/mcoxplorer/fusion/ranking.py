@@ -15,15 +15,22 @@ def run_fusion_ranking(cfg: dict, sequence_df: pd.DataFrame, structure_df: pd.Da
     merged["candidate_id"] = merged["protein_id"]
 
     merged["structure_score"] = merged.get("structure_score", 0.0).fillna(0.0)
-    merged["best_structure_similarity_to_positive"] = merged.get("best_structure_similarity_to_positive", 0.0).fillna(0.0)
+    merged["best_structure_similarity_to_positive"] = merged.get("best_structure_similarity_to_positive", 0.0)
     merged["structure_novelty_score"] = merged.get("structure_novelty_score", 0.0).fillna(0.0)
     merged["novelty"] = merged.get("novelty", 0.0).fillna(0.0)
     merged["nearest_positive_structure_cluster"] = merged.get("nearest_positive_structure_cluster", "NA").fillna("NA")
 
     merged["sequence_structure_agreement_score"] = merged.get("sequence_structure_agreement_score", 0.5).fillna(0.5)
     merged["false_positive_risk"] = derive_false_positive_risk(merged)
+    merged["remote_but_structure_supported"] = (
+        merged.get("best_identity_to_positive", pd.Series([1.0] * len(merged))).fillna(1.0) < 0.35
+    ) & (merged.get("best_structure_similarity_to_positive", pd.Series([0.0] * len(merged))).fillna(0.0) >= 0.65)
 
     merged["final_multimodal_score"] = compute_final_multimodal_score(merged, cfg["fusion"]["weights"])
+    merged["high_confidence_first_batch"] = (
+        (merged["final_multimodal_score"] >= 0.6)
+        & (merged["false_positive_risk"] < 0.5)
+    )
     merged["final_reason_summary"] = merged.apply(_final_reason, axis=1)
 
     merged = merged.sort_values("final_multimodal_score", ascending=False).reset_index(drop=True)
@@ -44,6 +51,8 @@ def run_fusion_ranking(cfg: dict, sequence_df: pd.DataFrame, structure_df: pd.Da
         "sequence_structure_agreement_score",
         "structure_novelty_score",
         "false_positive_risk",
+        "remote_but_structure_supported",
+        "high_confidence_first_batch",
         "structure_reason_summary",
         "final_reason_summary",
     ]
@@ -55,13 +64,12 @@ def run_fusion_ranking(cfg: dict, sequence_df: pd.DataFrame, structure_df: pd.Da
 
 
 def _final_reason(row: pd.Series) -> str:
-    remote_struct = row.get("best_identity_to_positive", 0) < 0.35 and row.get("best_structure_similarity_to_positive", 0) > 0.65
     if pd.isna(row.get("best_structure_similarity_to_positive")):
         return "缺乏结构证据，当前排名主要由序列模块驱动。"
-    if remote_struct:
-        return "该候选在一级序列空间中与正样本距离较远，但在三维结构层面与正样本簇高度接近，建议优先验证。"
+    if bool(row.get("remote_but_structure_supported", False)):
+        return "序列远缘但结构强支持，建议优先进入第一批验证。"
     if row.get("sequence_score", 0) > 0.6 and row.get("structure_score", 0) > 0.6:
-        return "该候选同时获得序列证据和结构证据支持，优先级较高。"
+        return "序列与结构证据一致且强，优先级高。"
     if row.get("false_positive_risk", 0) > 0.65:
-        return "该候选虽有部分相似性，但更可能属于通用MCO背景，建议谨慎纳入首轮实验。"
-    return "序列与结构证据中等，建议作为二批候选或补充证据后推进。"
+        return "存在较高通用MCO背景风险，建议谨慎。"
+    return "证据中等，建议作为第二批或补充证据后推进。"

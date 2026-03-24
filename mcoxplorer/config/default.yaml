@@ -21,6 +21,8 @@ external_tools:
   mmseqs2: mmseqs
   foldseek: foldseek
   tmalign: TMalign
+  hmmbuild: hmmbuild
+  hmmsearch: hmmsearch
 
 runtime:
   reuse_existing: true
@@ -34,9 +36,10 @@ sequence:
   family_aware_grouping: true
   embedding:
     enabled: true
-    model_name: esm2_t6_8M_UR50D
+    model_name: facebook/esm2_t6_8M_UR50D
     cache_dir: ~/.cache/mcoxplorer
-    mock_if_unavailable: true
+    device: cpu
+    force_mock: false
   hmm:
     enabled: true
     min_cluster_size: 2
@@ -49,7 +52,9 @@ structure:
     linkage_method: average
     cut_distance_threshold: 0.45
   quality:
-    min_modeled_residue_count: 1
+    min_modeled_residue_count: 30
+    min_structure_confidence: 50.0
+    min_structure_coverage: 0.5
   foldseek:
     sensitivity: 7.5
     max_seqs: 200
