@@ -51,6 +51,7 @@ structure:
   enabled: true
   top_k_support: 3
   support_similarity_threshold: 0.45
+  local_radius: 8.0
   clustering:
     linkage_method: average
     cut_distance_threshold: 0.45
@@ -58,6 +59,9 @@ structure:
     min_modeled_residue_count: 30
     min_structure_confidence: 50.0
     min_structure_coverage: 0.5
+    penalty_if_quality_fail: 0.45
+    penalty_if_low_coverage: 0.30
+    penalty_if_low_confidence: 0.30
   foldseek:
     sensitivity: 7.5
     max_seqs: 200

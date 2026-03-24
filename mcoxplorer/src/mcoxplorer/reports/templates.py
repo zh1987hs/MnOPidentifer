@@ -19,8 +19,10 @@ def structure_global_summary(row: pd.Series) -> str:
 
 def structure_local_summary(row: pd.Series) -> str:
     return (
-        f"motif_count={row.get('motif_count', 'NA')}; acidic_density={row.get('local_acidic_density', 'NA')}; "
-        f"local_support={row.get('local_structural_support', 'NA')}"
+        f"motif_count={row.get('motif_count', 'NA')}; "
+        f"sequence_local_support={row.get('sequence_local_support', 'NA')}; "
+        f"structure_local_support_3d={row.get('structure_local_support_3d', 'NA')}; "
+        f"combined_local_support={row.get('combined_local_support', 'NA')}"
     )
 
 
@@ -51,6 +53,7 @@ def risk_notes(row: pd.Series) -> str:
 
 def local_support_interpretation(row: pd.Series) -> str:
     src = row.get("local_support_source", "sequence_heuristic")
+    confidence = row.get("motif_mapping_confidence", "NA")
     if src == "structure_3d":
-        return "局部支持来自3D空间邻域统计。"
+        return f"局部支持来自3D空间邻域统计（mapping_confidence={confidence}）。"
     return "局部支持主要来自序列邻域启发式。"

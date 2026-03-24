@@ -51,6 +51,37 @@ def cluster_sequences(records: list[SequenceRecord], threshold: float) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+
+
+def cluster_sequences_mmseqs(records: list[SequenceRecord], mmseqs_exe: str | None, tmp_root: Path, min_seq_id: float = 0.4) -> pd.DataFrame:
+    """Use MMseqs2 easy-cluster when available; fallback otherwise."""
+
+    if mmseqs_exe is None:
+        out = cluster_sequences(records, min_seq_id)
+        out["clustering_backend"] = "fallback_greedy"
+        return out
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    in_fa = tmp_root / "positive.fa"
+    _write_fasta(records, in_fa)
+    out_prefix = tmp_root / "cluster"
+    run_command([mmseqs_exe, "easy-cluster", str(in_fa), str(out_prefix), str(tmp_root / "tmp"), "--min-seq-id", str(min_seq_id), "-c", "0.8"])
+
+    tsv = Path(str(out_prefix) + "_cluster.tsv")
+    if not tsv.exists():
+        out = cluster_sequences(records, min_seq_id)
+        out["clustering_backend"] = "fallback_greedy"
+        return out
+    raw = pd.read_csv(tsv, sep="	", header=None, names=["rep", "member"])
+    rep_to_cluster = {rep: i + 1 for i, rep in enumerate(sorted(raw["rep"].unique()))}
+    rows = []
+    for r in records:
+        hit = raw[raw["member"] == r.protein_id]
+        if hit.empty:
+            cid = len(rep_to_cluster) + 1
+        else:
+            cid = rep_to_cluster[hit.iloc[0]["rep"]]
+        rows.append({"protein_id": r.protein_id, "sequence_cluster": cid, "clustering_backend": "mmseqs2"})
+    return pd.DataFrame(rows)
 def _write_fasta(records: list[SequenceRecord], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:
         for r in records:

@@ -259,12 +259,13 @@ def run_structure_module(cfg: dict, sequence_features: pd.DataFrame | None = Non
         quality_penalty = 0.0
         if cid in qc_by_id.index:
             qrow = qc_by_id.loc[cid]
+            qcfg = structure_cfg.get("quality", {})
             if not bool(qrow.get("structure_quality_pass", False)):
-                quality_penalty = 0.45
-            if pd.notna(qrow.get("structure_coverage")) and qrow.get("structure_coverage") < structure_cfg["quality"].get("min_structure_coverage", 0.5):
-                quality_penalty = max(quality_penalty, 0.3)
-            if pd.notna(qrow.get("mean_structure_confidence")) and qrow.get("mean_structure_confidence") < structure_cfg["quality"].get("min_structure_confidence", 50.0):
-                quality_penalty = max(quality_penalty, 0.3)
+                quality_penalty = float(qcfg.get("penalty_if_quality_fail", 0.45))
+            if pd.notna(qrow.get("structure_coverage")) and qrow.get("structure_coverage") < qcfg.get("min_structure_coverage", 0.5):
+                quality_penalty = max(quality_penalty, float(qcfg.get("penalty_if_low_coverage", 0.30)))
+            if pd.notna(qrow.get("mean_structure_confidence")) and qrow.get("mean_structure_confidence") < qcfg.get("min_structure_confidence", 50.0):
+                quality_penalty = max(quality_penalty, float(qcfg.get("penalty_if_low_confidence", 0.30)))
 
         reason = "Strong global+local structural support." if (best_any >= 0.7 and combined_local >= 0.5) else ("Moderate structure support; validate with sequence evidence." if best_any >= 0.6 else "Weak structure support; possible generic MCO background risk.")
 

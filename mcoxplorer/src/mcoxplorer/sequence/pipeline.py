@@ -8,7 +8,7 @@ from mcoxplorer.io.idmap import IdMapper
 from mcoxplorer.io.qc import sequence_qc
 from mcoxplorer.io.readers import read_csv, read_fasta
 from mcoxplorer.sequence.features import (
-    cluster_sequences,
+    cluster_sequences_mmseqs,
     embedding_features,
     hmm_scores_hmmer,
     resolve_sequence_tools,
@@ -39,14 +39,17 @@ def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
     pos_clean, pos_qc = sequence_qc(pos, seq_cfg["min_length"], seq_cfg["max_length"])
     cand_clean, cand_qc = sequence_qc(cand, seq_cfg["min_length"], seq_cfg["max_length"])
 
-    pos_clusters = cluster_sequences(pos_clean, seq_cfg["identity_cluster_threshold"]).merge(
-        pos_md[["protein_id", "family", "label_type"]], on="protein_id", how="left"
-    )
-
     inter_dir = out_dir / "intermediate" / "sequence"
     inter_dir.mkdir(parents=True, exist_ok=True)
 
     tools = resolve_sequence_tools(cfg.get("external_tools", {}))
+
+    pos_clusters = cluster_sequences_mmseqs(
+        pos_clean,
+        tools.get("mmseqs"),
+        inter_dir / "cluster",
+        min_seq_id=seq_cfg["identity_cluster_threshold"],
+    ).merge(pos_md[["protein_id", "family", "label_type"]], on="protein_id", how="left")
     sim = similarity_search_mmseqs(
         cand_clean,
         pos_clean,

@@ -57,3 +57,16 @@ mcoxplorer run -c config/default.yaml
 - Local 3D features are first-pass spatial statistics (not full pocket energetics/MD).
 - Structure similarity does not guarantee Mn(II)-oxidizing activity.
 - Wet-lab validation is required.
+
+
+## Structure quality penalty config
+In `config/default.yaml -> structure.quality`:
+- `penalty_if_quality_fail`
+- `penalty_if_low_coverage`
+- `penalty_if_low_confidence`
+
+These values directly down-weight `structure_score`, and therefore affect fused ranking.
+
+## Motif-to-structure mapping boundary
+3D local support uses a first-pass residue-order mapping with tolerance, then computes neighborhood statistics around mapped motif residues.
+If mapping is insufficient, local support falls back to sequence heuristic and report marks this source explicitly.

@@ -101,13 +101,21 @@ def compute_local_motif_sequence_support(sequence: str) -> dict[str, float]:
 
 
 def compute_local_support_3d(structure_path: Path, sequence: str, motif_positions: list[int], radius: float = 8.0) -> dict[str, float]:
-    """Compute first-pass 3D local neighborhood stats around motif CA atoms."""
+    """Compute first-pass 3D local neighborhood stats around mapped motif residues.
+
+    Mapping strategy (v1 robust):
+    1) build ordered modeled-residue index map from CA residues per chain
+    2) map motif positions to nearest valid modeled residue index within bounds
+    3) if insufficient mapped motifs, fallback to sequence heuristic source
+    """
 
     if not motif_positions or not structure_path.exists():
         return {
             "structure_local_support_3d": np.nan,
             "local_neighbor_count_3d": np.nan,
             "local_acidic_ratio_3d": np.nan,
+            "motif_mapped_count_3d": 0,
+            "motif_mapping_confidence": 0.0,
             "local_support_source": "sequence_heuristic",
         }
     try:
@@ -117,58 +125,75 @@ def compute_local_support_3d(structure_path: Path, sequence: str, motif_position
             "structure_local_support_3d": np.nan,
             "local_neighbor_count_3d": np.nan,
             "local_acidic_ratio_3d": np.nan,
+            "motif_mapped_count_3d": 0,
+            "motif_mapping_confidence": 0.0,
             "local_support_source": "sequence_heuristic",
         }
 
     residue_coords = []
     residue_names = []
+    residue_seq_index_map = []
+    seq_cursor = 0
     for model in structure:
         for chain in model:
-            for residue in chain:
-                if residue.id[0] != " ":
-                    continue
-                if "CA" in residue:
-                    residue_coords.append(residue["CA"].get_coord())
-                    residue_names.append(residue.get_resname())
+            chain_res = [r for r in chain if r.id[0] == " " and "CA" in r]
+            # Use modeled residue order per chain as a coarse sequence index map.
+            for r in chain_res:
+                residue_coords.append(r["CA"].get_coord())
+                residue_names.append(r.get_resname())
+                residue_seq_index_map.append(seq_cursor + 1)  # 1-based
+                seq_cursor += 1
     if not residue_coords:
         return {
             "structure_local_support_3d": np.nan,
             "local_neighbor_count_3d": np.nan,
             "local_acidic_ratio_3d": np.nan,
+            "motif_mapped_count_3d": 0,
+            "motif_mapping_confidence": 0.0,
             "local_support_source": "sequence_heuristic",
         }
 
     coords = np.array(residue_coords)
     acidic_names = {"ASP", "GLU"}
-    motif_indices = [i - 1 for i in motif_positions if 0 < i <= len(coords)]
-    if not motif_indices:
+
+    mapped_indices = []
+    for mpos in motif_positions:
+        # nearest modeled residue by sequence-order distance
+        nearest = min(range(len(residue_seq_index_map)), key=lambda i: abs(residue_seq_index_map[i] - mpos))
+        if abs(residue_seq_index_map[nearest] - mpos) <= 3:
+            mapped_indices.append(nearest)
+
+    mapped_count = len(mapped_indices)
+    mapping_conf = mapped_count / max(len(motif_positions), 1)
+    if mapped_count == 0:
         return {
             "structure_local_support_3d": np.nan,
             "local_neighbor_count_3d": np.nan,
             "local_acidic_ratio_3d": np.nan,
+            "motif_mapped_count_3d": 0,
+            "motif_mapping_confidence": 0.0,
             "local_support_source": "sequence_heuristic",
         }
 
     neighbor_counts = []
     acidic_ratios = []
-    for midx in motif_indices:
+    for midx in mapped_indices:
         d = np.linalg.norm(coords - coords[midx], axis=1)
         neighbors = np.where(d <= radius)[0]
         neighbor_counts.append(len(neighbors))
-        if len(neighbors) == 0:
-            acidic_ratios.append(0.0)
-        else:
-            acidic = sum(1 for n in neighbors if residue_names[n] in acidic_names)
-            acidic_ratios.append(acidic / len(neighbors))
+        acidic = sum(1 for n in neighbors if residue_names[n] in acidic_names)
+        acidic_ratios.append(acidic / max(len(neighbors), 1))
 
     neighbor_mean = float(np.mean(neighbor_counts))
     acidic_mean = float(np.mean(acidic_ratios))
-    support3d = min(1.0, 0.5 * acidic_mean + 0.5 * min(1.0, neighbor_mean / 20.0))
+    support3d = min(1.0, 0.45 * acidic_mean + 0.35 * min(1.0, neighbor_mean / 20.0) + 0.20 * mapping_conf)
     return {
         "structure_local_support_3d": support3d,
         "local_neighbor_count_3d": neighbor_mean,
         "local_acidic_ratio_3d": acidic_mean,
-        "local_support_source": "structure_3d",
+        "motif_mapped_count_3d": mapped_count,
+        "motif_mapping_confidence": mapping_conf,
+        "local_support_source": "structure_3d" if mapping_conf >= 0.5 else "sequence_heuristic",
     }
 
 
