@@ -1,0 +1,66 @@
+project_name: mcoxplorer
+output_dir: examples/output
+log_level: INFO
+
+inputs:
+  positive_fasta: examples/input/positive_sequences.fasta
+  candidate_fasta: examples/input/candidate_sequences.fasta
+  positive_metadata_csv: examples/input/positive_metadata.csv
+  positive_structure_dir: examples/input/structures_positive
+  candidate_structure_dir: examples/input/structures_candidate
+  structure_metadata_csv: examples/input/structure_metadata.csv
+  id_mapping_csv: examples/input/id_mapping.csv
+
+modes:
+  run_sequence: true
+  run_structure: true
+  run_fusion: true
+  run_report: true
+
+external_tools:
+  mmseqs2: mmseqs
+  foldseek: foldseek
+  tmalign: TMalign
+
+runtime:
+  reuse_existing: true
+  force_rerun: false
+  structure_required: false
+
+sequence:
+  min_length: 30
+  max_length: 2000
+  identity_cluster_threshold: 0.4
+  family_aware_grouping: true
+  embedding:
+    enabled: true
+    model_name: esm2_t6_8M_UR50D
+    cache_dir: ~/.cache/mcoxplorer
+    mock_if_unavailable: true
+  hmm:
+    enabled: true
+    min_cluster_size: 2
+
+structure:
+  enabled: true
+  top_k_support: 3
+  support_similarity_threshold: 0.45
+  clustering:
+    linkage_method: average
+    cut_distance_threshold: 0.45
+  quality:
+    min_modeled_residue_count: 1
+  foldseek:
+    sensitivity: 7.5
+    max_seqs: 200
+  tmalign:
+    enabled: true
+    top_k_per_query: 3
+
+fusion:
+  weights:
+    sequence_score: 0.5
+    structure_score: 0.4
+    novelty_bonus: 0.15
+    false_positive_risk_penalty: 0.2
+  top_n_report: 20
