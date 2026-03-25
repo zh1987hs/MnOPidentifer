@@ -1,0 +1,4 @@
+protein_id,label_type,family,source,accession,notes
+pos_gold_1,gold,MnMCO_A,literature,P00001,validated Mn oxidation
+pos_gold_2,gold,MnMCO_A,literature,P00002,validated Mn oxidation
+pos_silver_1,silver,MnMCO_B,homology,P00003,high-confidence homolog

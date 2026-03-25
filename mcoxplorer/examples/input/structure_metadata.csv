@@ -1,0 +1,6 @@
+protein_id,structure_path,source,model_confidence,coverage
+pos_gold_1,examples/input/structures_positive/pos_gold_1.pdb,experimental,0.92,0.98
+pos_gold_2,examples/input/structures_positive/pos_gold_2.pdb,af2,0.88,0.95
+cand_1,examples/input/structures_candidate/cand_1.pdb,af2,0.85,0.96
+cand_2,examples/input/structures_candidate/cand_2.pdb,af2,0.72,0.90
+cand_4,examples/input/structures_candidate/cand_4.pdb,af2,0.60,0.82

@@ -1,0 +1,8 @@
+fasta_id,metadata_id,structure_id
+pos_gold_1,pos_gold_1,pos_gold_1
+pos_gold_2,pos_gold_2,pos_gold_2
+pos_silver_1,pos_silver_1,pos_silver_1
+cand_1,cand_1,cand_1
+cand_2,cand_2,cand_2
+cand_3,cand_3,cand_3
+cand_4,cand_4,cand_4
