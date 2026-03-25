@@ -10,6 +10,7 @@ MCOxplorer is an offline, reproducible **sequence + structure multimodal candida
 - Positive-sequence clustering: MMseqs2 easy-cluster (fallback: greedy identity clustering).
 - HMMER profile scoring with **MSA-first** pipeline: MAFFT (preferred) or MUSCLE -> hmmbuild -> hmmsearch.
 - ESM2 local embedding runtime with one-time model/tokenizer init and batch inference.
+- Optional structure-aware embedding runtime (ProstT5 preferred; ESM2/mock fallback supported by config).
 - Foldseek structure search + optional TM-align refinement.
 - Structure QC with PDB/mmCIF parsing + metadata fusion + quality thresholds.
 - Local support includes sequence motif heuristics + optional 3D neighborhood stats.
@@ -52,8 +53,23 @@ mcoxplorer run -c config/default.yaml
 
 ## Practical notes
 - `sequence_cluster_backend` indicates `mmseqs2` or `fallback_greedy`.
+- `structure_aware_embedding_backend` indicates which structure-aware embedding backend actually ran (`prostt5`, `esm2`, `mock`, or `disabled`).
 - `structure_quality_penalty` and `structure_evidence_usable` directly affect structure score and report interpretation.
 - `remote_but_structure_supported` and `high_confidence_first_batch` help experiment prioritization.
+
+## Structure-aware embedding (optional)
+Under `sequence.structure_aware_embedding` in `config/default.yaml`:
+- `enabled`: turn this feature stream on/off.
+- `backend`: `prostt5`, `esm2`, or `mock`.
+- `model_name`, `cache_dir`, `device`, `batch_size`, `force_mock`: runtime controls.
+
+Feature outputs in `candidate_sequence_features.csv`:
+- `structure_aware_embedding_backend`
+- `structure_aware_distance_to_positive_centroid`
+- `structure_aware_novelty`
+- `nearest_positive_structure_aware_distance`
+
+Scoring integration is opt-in via `sequence.structure_aware_embedding_weight` (default `0.0`, i.e., no impact on sequence score).
 
 ## Limitations
 - Local 3D features are first-pass spatial statistics (not full pocket energetics/MD).

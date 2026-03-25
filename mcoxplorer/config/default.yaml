@@ -43,6 +43,15 @@ sequence:
     device: cpu
     force_mock: false
     batch_size: 8
+  structure_aware_embedding:
+    enabled: false
+    backend: prostt5
+    model_name: Rostlab/ProstT5
+    cache_dir: ~/.cache/mcoxplorer
+    device: cpu
+    force_mock: false
+    batch_size: 8
+  structure_aware_embedding_weight: 0.0
   hmm:
     enabled: true
     min_cluster_size: 2

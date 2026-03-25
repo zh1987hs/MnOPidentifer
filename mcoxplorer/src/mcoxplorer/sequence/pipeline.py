@@ -15,6 +15,7 @@ from mcoxplorer.sequence.features import (
     similarity_search_fallback,
     similarity_search_mmseqs,
 )
+from mcoxplorer.sequence.structure_aware_embedding import structure_aware_embedding_features
 
 
 def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
@@ -61,6 +62,7 @@ def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
         sim = similarity_search_fallback(cand_clean, pos_clean)
 
     emb = embedding_features(cand_clean, pos_clean, seq_cfg.get("embedding", {}))
+    struct_aware = structure_aware_embedding_features(cand_clean, pos_clean, seq_cfg.get("structure_aware_embedding", {}))
     hmm = hmm_scores_hmmer(
         cand_clean,
         pos_clean,
@@ -69,11 +71,17 @@ def run_sequence_module(cfg: dict) -> dict[str, pd.DataFrame]:
         inter_dir / "hmmer",
     )
 
-    features = sim.merge(emb, on="protein_id", how="left").merge(hmm, on="protein_id", how="left")
+    features = (
+        sim.merge(emb, on="protein_id", how="left")
+        .merge(struct_aware, on="protein_id", how="left")
+        .merge(hmm, on="protein_id", how="left")
+    )
+    structure_aware_weight = min(max(float(seq_cfg.get("structure_aware_embedding_weight", 0.0)), 0.0), 1.0)
     features["sequence_score"] = (
-        0.55 * features["best_identity_to_positive"].fillna(0)
-        + 0.30 * features["hmm_score"].fillna(0)
-        + 0.15 * (1 - features["embedding_distance_to_positive_centroid"].fillna(1).clip(upper=1))
+        0.55 * (1.0 - structure_aware_weight) * features["best_identity_to_positive"].fillna(0)
+        + 0.30 * (1.0 - structure_aware_weight) * features["hmm_score"].fillna(0)
+        + 0.15 * (1.0 - structure_aware_weight) * (1 - features["embedding_distance_to_positive_centroid"].fillna(1).clip(upper=1))
+        + structure_aware_weight * (1 - features["structure_aware_distance_to_positive_centroid"].fillna(1).clip(upper=1))
     ).clip(lower=0, upper=1)
     features["nearest_positive_family"] = features["best_positive_id"].map(pos_md.set_index("protein_id")["family"].to_dict())
     ranked = features.sort_values("sequence_score", ascending=False).reset_index(drop=True)
